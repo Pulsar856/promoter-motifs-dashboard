@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ app_name }} - Motif Config</title>
+    <style>
+        :root {
+            --bg: #f7f2e6;
+            --panel: #fff;
+            --text: #1a2637;
+            --line: #d6ccb3;
+            --accent: #d69200;
+            --ok: #177447;
+        }
+
+        body {
+            margin: 0;
+            font-family: "IBM Plex Sans", "Trebuchet MS", sans-serif;
+            background: linear-gradient(165deg, #faf6eb, #f2ead7);
+            color: var(--text);
+            padding: 20px;
+        }
+
+        .wrap {
+            max-width: 980px;
+            margin: 0 auto;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            background: var(--panel);
+            box-shadow: 0 15px 36px rgba(0, 0, 0, 0.09);
+            padding: 16px;
+        }
+
+        h1 {
+            margin: 0 0 10px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 520px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 10px;
+            font-family: "JetBrains Mono", "Consolas", monospace;
+            font-size: 0.92rem;
+        }
+
+        button, a {
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-weight: 700;
+            text-decoration: none;
+            color: #20242b;
+            background: #f6f0df;
+            cursor: pointer;
+        }
+
+        button {
+            border: none;
+            background: linear-gradient(135deg, var(--accent), #f2bd3d);
+        }
+
+        .actions {
+            margin-top: 10px;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .msg {
+            margin: 10px 0;
+            color: var(--ok);
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1>Motif Config Editor</h1>
+        {% if message %}
+            <div class="msg">{{ message }}</div>
+        {% endif %}
+        <form method="post">
+            <textarea name="config_json">{{ config_text }}</textarea>
+            <div class="actions">
+                <button type="submit">Save config</button>
+                <a href="/">Back to dashboard</a>
+            </div>
+        </form>
+    </div>
+</body>
+</html>

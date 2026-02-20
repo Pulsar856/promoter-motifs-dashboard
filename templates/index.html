@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ app_name }}</title>
+    <style>
+        :root {
+            --ink: #11151a;
+            --panel: #f8f7f2;
+            --panel-strong: #ece7d8;
+            --text: #152131;
+            --muted: #4f5f73;
+            --brand: #d69200;
+            --brand-2: #f3bc32;
+            --line: #c9c1a8;
+            --danger: #b01919;
+            --ok: #18754b;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "IBM Plex Sans", "Trebuchet MS", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(1200px 520px at 5% -10%, rgba(243, 188, 50, 0.28), transparent 60%),
+                radial-gradient(900px 480px at 95% 0%, rgba(87, 122, 159, 0.20), transparent 56%),
+                linear-gradient(160deg, #faf7ef, #f4eedf 48%, #efe7d4 100%);
+            min-height: 100vh;
+            padding: 18px 12px 36px;
+        }
+
+        .shell {
+            max-width: 1260px;
+            margin: 0 auto;
+            display: grid;
+            gap: 16px;
+        }
+
+        .hero {
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            padding: 20px;
+            background: linear-gradient(100deg, rgba(214, 146, 0, 0.14), rgba(255, 255, 255, 0.78) 50%, rgba(87, 122, 159, 0.10));
+            box-shadow: 0 20px 46px rgba(17, 21, 26, 0.12);
+            animation: rise 320ms ease-out;
+        }
+
+        .hero h1 {
+            margin: 0;
+            letter-spacing: 0.01em;
+            font-size: clamp(1.4rem, 3.1vw, 2.1rem);
+        }
+
+        .hero p {
+            margin: 8px 0 0;
+            color: var(--muted);
+        }
+
+        .panel {
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 16px;
+            background: var(--panel);
+            box-shadow: 0 14px 34px rgba(17, 21, 26, 0.10);
+        }
+
+        .form-grid {
+            display: grid;
+            gap: 14px;
+            grid-template-columns: 2fr 1fr;
+        }
+
+        .form-grid > div {
+            min-width: 0;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 700;
+            font-size: 0.93rem;
+        }
+
+        textarea,
+        input,
+        select,
+        button {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            padding: 10px 11px;
+            font-size: 0.95rem;
+            font-family: "IBM Plex Sans", "Trebuchet MS", sans-serif;
+            color: var(--text);
+            background: #fff;
+        }
+
+        textarea {
+            min-height: 220px;
+            resize: vertical;
+            font-family: "JetBrains Mono", "Consolas", monospace;
+        }
+
+        textarea:focus,
+        input:focus,
+        select:focus {
+            outline: 2px solid rgba(214, 146, 0, 0.28);
+            border-color: var(--brand);
+        }
+
+        .hint {
+            margin: 6px 0 0;
+            color: var(--muted);
+            font-size: 0.85rem;
+        }
+
+        .subgrid {
+            display: grid;
+            gap: 10px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            margin-top: 10px;
+        }
+
+        .toggle {
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toggle input {
+            width: auto;
+        }
+
+        .toggle label {
+            margin: 0;
+            font-weight: 600;
+        }
+
+        .actions {
+            margin-top: 12px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            width: auto;
+            border: none;
+            font-weight: 700;
+            cursor: pointer;
+            background: linear-gradient(135deg, var(--brand), var(--brand-2));
+            color: #1c1609;
+            box-shadow: 0 8px 20px rgba(214, 146, 0, 0.26);
+            transition: transform 120ms ease, filter 120ms ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            filter: brightness(1.02);
+        }
+
+        .btn-link {
+            width: auto;
+            display: inline-flex;
+            align-items: center;
+            text-decoration: none;
+            background: #f1ecdf;
+            color: var(--text);
+            border: 1px solid var(--line);
+            font-weight: 700;
+            padding: 10px 12px;
+            border-radius: 10px;
+        }
+
+        .error {
+            margin-top: 12px;
+            border: 1px solid rgba(176, 25, 25, 0.26);
+            color: var(--danger);
+            background: rgba(176, 25, 25, 0.06);
+            border-radius: 10px;
+            padding: 10px 11px;
+            font-weight: 700;
+        }
+
+        .ok {
+            margin-top: 12px;
+            border: 1px solid rgba(24, 117, 75, 0.26);
+            color: var(--ok);
+            background: rgba(24, 117, 75, 0.08);
+            border-radius: 10px;
+            padding: 10px 11px;
+            font-weight: 700;
+        }
+
+        .results {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .card h2 {
+            margin: 0 0 10px;
+            font-size: 1.06rem;
+        }
+
+        .metrics {
+            display: grid;
+            gap: 10px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            margin-bottom: 12px;
+        }
+
+        .metric {
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 9px 10px;
+            background: linear-gradient(180deg, #fff, var(--panel-strong));
+        }
+
+        .metric .k {
+            color: var(--muted);
+            font-size: 0.82rem;
+            margin-bottom: 3px;
+        }
+
+        .metric .v {
+            font-size: 1.02rem;
+            font-weight: 700;
+        }
+
+        .mono {
+            font-family: "JetBrains Mono", "Consolas", monospace;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 10px;
+            background: #fcfbf7;
+        }
+
+        .scroll {
+            overflow: auto;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            background: #fcfbf7;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 670px;
+        }
+
+        th,
+        td {
+            padding: 9px 10px;
+            border-bottom: 1px solid #ddd3b6;
+            text-align: left;
+            vertical-align: top;
+            font-size: 0.88rem;
+        }
+
+        th {
+            background: #efe7d3;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        details {
+            margin-top: 8px;
+            border: 1px dashed var(--line);
+            border-radius: 10px;
+            padding: 10px;
+            background: #f9f5e8;
+        }
+
+        details summary {
+            cursor: pointer;
+            font-weight: 700;
+            color: #3d4f66;
+        }
+
+        @media (max-width: 980px) {
+            .form-grid,
+            .results {
+                grid-template-columns: 1fr;
+            }
+            .metrics,
+            .subgrid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @keyframes rise {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <section class="hero">
+            <h1>{{ app_name }}</h1>
+            <p>Single dashboard to run Sigma70 promoter detection and DNA motif/risk analysis together.</p>
+        </section>
+
+        <section class="panel">
+            <form method="POST" enctype="multipart/form-data">
+                <div class="form-grid">
+                    <div>
+                        <label for="sequence_input">Paste DNA sequence or FASTA content</label>
+                        <textarea
+                            id="sequence_input"
+                            name="sequence_input"
+                            placeholder="Paste A/C/G/T/N sequence or FASTA text starting with >header"
+                        >{{ form_values.sequence_input }}</textarea>
+                        <p class="hint">Accepted characters: A, C, G, T, N.</p>
+                    </div>
+                    <div>
+                        <label for="fasta_file">Or upload a FASTA file</label>
+                        <input id="fasta_file" type="file" name="fasta_file" accept=".fasta,.fa,.fas,.fna,.txt">
+
+                        <details>
+                            <summary>Promoter Scan Parameters</summary>
+                            <label for="preset">Sensitivity preset</label>
+                            <select name="preset" id="preset">
+                                {% for preset in preset_options %}
+                                    <option value="{{ preset }}" {% if form_values.preset == preset %}selected{% endif %}>
+                                        {{ preset|capitalize }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+
+                            <div class="subgrid">
+                                <div>
+                                    <label for="min_spacing">Min spacing</label>
+                                    <input type="number" name="min_spacing" value="{{ form_values.min_spacing }}" min="0">
+                                </div>
+                                <div>
+                                    <label for="max_spacing">Max spacing</label>
+                                    <input type="number" name="max_spacing" value="{{ form_values.max_spacing }}" min="0">
+                                </div>
+                                <div>
+                                    <label for="min_norm_35">Min -35 score (0-1)</label>
+                                    <input type="number" step="0.01" min="0" max="1" name="min_norm_35" value="{{ form_values.min_norm_35 }}">
+                                </div>
+                                <div>
+                                    <label for="min_norm_10">Min -10 score (0-1)</label>
+                                    <input type="number" step="0.01" min="0" max="1" name="min_norm_10" value="{{ form_values.min_norm_10 }}">
+                                </div>
+                                <div>
+                                    <label for="min_combined">Min combined score (0-1)</label>
+                                    <input type="number" step="0.01" min="0" max="1" name="min_combined" value="{{ form_values.min_combined }}">
+                                </div>
+                                <div>
+                                    <label for="max_hits">Max hits returned</label>
+                                    <input type="number" min="1" max="1000" name="max_hits" value="{{ form_values.max_hits }}">
+                                </div>
+                            </div>
+
+                            <div class="toggle">
+                                <input type="checkbox" id="circular_sequence" name="circular_sequence" {% if form_values.circular_sequence == 'on' %}checked{% endif %}>
+                                <label for="circular_sequence">Treat sequence as circular</label>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button class="btn" type="submit">Run Dashboard Analysis</button>
+                    <a class="btn-link" href="/admin/config">Open Motif Config</a>
+                </div>
+
+                {% if input_error %}
+                    <div class="error">{{ input_error }}</div>
+                {% endif %}
+                {% if sequence_length > 0 %}
+                    <div class="ok">Parsed sequence length: {{ sequence_length }} bp</div>
+                {% endif %}
+            </form>
+        </section>
+
+        {% if sequence_length > 0 %}
+        <section class="results">
+            <article class="panel card">
+                <h2>DNA Motifs & Risk</h2>
+                {% if motif_error %}
+                    <div class="error">{{ motif_error }}</div>
+                {% elif motif_analysis %}
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="k">Motifs Found</div>
+                            <div class="v">{{ motif_analysis.motifs|length }}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">Risk Total</div>
+                            <div class="v">{{ motif_analysis.risk.total|round(6) }}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">Risk v2 Hardcoded</div>
+                            <div class="v">{{ motif_analysis.risk_new.total|round(6) }}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="k">Sequence Length</div>
+                            <div class="v">{{ motif_analysis.sequence_length }} bp</div>
+                        </div>
+                    </div>
+
+                    <div class="scroll">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Motif</th>
+                                    <th>Category</th>
+                                    <th>Positions / Segments</th>
+                                    <th>Score</th>
+                                    <th>Heuristic</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for m in motif_analysis.motifs %}
+                                <tr>
+                                    <td>{{ m.name }}</td>
+                                    <td>{{ m.category }}</td>
+                                    <td>
+                                        {% if m.heuristic and m.segments is defined %}
+                                            segments={{ m.count_segments }}; coverage={{ (m.coverage_fraction*100)|round(2) }}%
+                                            {% for s in m.segments %}
+                                                <div>[{{ s.start }}-{{ s.end }}] {{ s.length_bp }} bp</div>
+                                            {% endfor %}
+                                        {% elif m.positions is defined %}
+                                            {{ m.positions | join(", ") }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ m.score }}</td>
+                                    <td>{{ "yes" if m.heuristic else "no" }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% endif %}
+            </article>
+
+            <article class="panel card">
+                <h2>Sigma70 Promoter Finder</h2>
+                {% if promoter_error %}
+                    <div class="error">{{ promoter_error }}</div>
+                {% else %}
+                    <label for="promoter_result">FASTA-like promoter output</label>
+                    <textarea id="promoter_result" readonly class="mono">{{ promoter_result }}</textarea>
+                    {% if promoter_matches %}
+                    <p class="hint">Visualization shows up to first 50 hits.</p>
+                    <div class="mono">
+{% for m in promoter_matches %}
+{{ m }}
+{% endfor %}
+                    </div>
+                    {% endif %}
+                {% endif %}
+            </article>
+        </section>
+        {% endif %}
+    </main>
+</body>
+</html>

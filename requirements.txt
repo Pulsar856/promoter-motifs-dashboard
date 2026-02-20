@@ -1,0 +1,3 @@
+Flask==2.3.2
+biopython==1.81
+regex

@@ -1,0 +1,25 @@
+{
+"motif_weights": {
+  "AAV ITR (3′ ou 5′)": 0.891953,
+  "DnaA box (E. coli)": 0.142225,
+  "G-quadruplex motif": 0.068802,
+  "Homopolymère long": -0.489931,
+  "Iteron 9-mer": 0.703687,
+  "ORI thermosensible (mutation G→A)": 0.327131,
+  "Palindrome long": -0.062260,
+  "Pause GC-riche": 0.401954,
+  "Retroviral LTR (type A, 3′ & 5′)": 0.624350,
+  "Région haute AT": -2.270334,
+  "Région haute GC": -0.721605,
+  "Skew GC fort": 1.458753,
+  "Tandem repeat long": 1.081868,
+  "Terminateur intrinsèque": 0.049241,
+  "i-motif motif": -0.255025
+},
+"category_weights": {
+  "replication": 0.092389,
+  "structure": 0.044266,
+  "transcription": 0.000866,
+  "heuristic": 0.052381
+}
+}
