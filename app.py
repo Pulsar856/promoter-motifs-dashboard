@@ -7,13 +7,51 @@ import json
 import os
 from pathlib import Path
 import random
+import subprocess
+import sys
 from threading import Timer
 import textwrap
 from typing import Dict, List
 import webbrowser
 
-from Bio import SeqIO, motifs
-from Bio.Seq import Seq
+def _bootstrap_local_venv() -> None:
+    project_dir = Path(__file__).resolve().parent
+    venv_dir = project_dir / ".venv"
+    venv_python = venv_dir / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+
+    if os.environ.get("PMD_VENV_BOOTSTRAPPED") == "1":
+        return
+
+    invoked_target = Path(sys.argv[0]).name.lower() if sys.argv else ""
+    if invoked_target != Path(__file__).name.lower():
+        return
+
+    try:
+        in_project_venv = Path(sys.prefix).resolve() == venv_dir.resolve()
+    except Exception:
+        in_project_venv = False
+
+    if not in_project_venv and venv_python.exists():
+        env = os.environ.copy()
+        env["PMD_VENV_BOOTSTRAPPED"] = "1"
+        target_script = str(Path(__file__).resolve())
+        cmd = [str(venv_python), target_script, *sys.argv[1:]]
+        completed = subprocess.run(cmd, env=env)
+        raise SystemExit(completed.returncode)
+
+
+_bootstrap_local_venv()
+
+try:
+    from Bio import SeqIO, motifs
+    from Bio.Seq import Seq
+except ModuleNotFoundError as exc:
+    if exc.name and exc.name.startswith("Bio"):
+        raise SystemExit(
+            "Missing dependency 'biopython'. Run '.\\setup_venv.ps1' then '.\\run.ps1', "
+            "or activate .venv before launching the app."
+        ) from exc
+    raise
 from flask import Flask, render_template, request, send_file
 
 from analysis import analyze_sequence_v2
