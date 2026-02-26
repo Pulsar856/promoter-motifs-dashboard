@@ -10,7 +10,7 @@ Single Flask app that merges:
   - Upload FASTA file
 - Promoter scan results (FASTA-like output + compact visualization)
 - DNA motif and risk panel (v2 analysis schema)
-- Professional PDF report export (detailed sections, copy-paste tables, glossary)
+- Professional PDF report export (detailed sections, wrapped print-safe tables, copy-paste tables, glossary)
 - Browser auto-opens on app start
 - Motif config editor at `/admin/config`
 

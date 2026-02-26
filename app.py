@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from bisect import bisect_left
 from datetime import datetime, timezone
+from html import escape
 from io import BytesIO, StringIO
 import json
 import os
 from pathlib import Path
 import random
 from threading import Timer
+import textwrap
 from typing import Dict, List
 import webbrowser
 
@@ -509,21 +511,85 @@ def _clip_text(value, max_len: int = 180) -> str:
     return text[: max_len - 3] + "..."
 
 
-def _build_copy_paste_table(headers: List[str], rows: List[List[str]]) -> str:
+def _max_line_length(value: str) -> int:
+    lines = _pdf_safe_text(value).splitlines()
+    if not lines:
+        return 0
+    return max(len(line) for line in lines)
+
+
+def _format_sequence_for_report(
+    sequence: str,
+    group_size: int = 8,
+    groups_per_line: int = 4,
+    html_mode: bool = False,
+) -> str:
+    clean = "".join(_pdf_safe_text(sequence).split())
+    if not clean:
+        return ""
+    groups = [clean[i : i + group_size] for i in range(0, len(clean), group_size)]
+    lines = [" ".join(groups[i : i + groups_per_line]) for i in range(0, len(groups), groups_per_line)]
+    if html_mode:
+        return "<br/>".join(escape(line) for line in lines)
+    return "\n".join(lines)
+
+
+def _wrap_text_cell(value: str, width: int) -> List[str]:
+    safe_value = _pdf_safe_text(value)
+    wrapped_lines: List[str] = []
+    for source_line in safe_value.splitlines() or [""]:
+        chunks = textwrap.wrap(
+            source_line,
+            width=max(1, width),
+            break_long_words=True,
+            break_on_hyphens=False,
+            replace_whitespace=False,
+            drop_whitespace=False,
+        )
+        if chunks:
+            wrapped_lines.extend(chunk.rstrip() for chunk in chunks)
+        else:
+            wrapped_lines.append("")
+    return wrapped_lines
+
+
+def _build_copy_paste_table(
+    headers: List[str],
+    rows: List[List[str]],
+    max_widths: List[int] | None = None,
+) -> str:
     safe_headers = [_pdf_safe_text(h) for h in headers]
     safe_rows = [[_pdf_safe_text(cell) for cell in row] for row in rows]
-    widths = [len(h) for h in safe_headers]
-    for row in safe_rows:
-        for idx, cell in enumerate(row):
-            widths[idx] = max(widths[idx], len(cell))
+    col_count = len(safe_headers)
+    if max_widths is not None and len(max_widths) != col_count:
+        raise ValueError("max_widths length must match number of table columns.")
 
-    def build_row(cells: List[str]) -> str:
-        return " | ".join(cells[i].ljust(widths[i]) for i in range(len(widths)))
+    widths: List[int] = []
+    for idx in range(col_count):
+        natural = _max_line_length(safe_headers[idx])
+        for row in safe_rows:
+            natural = max(natural, _max_line_length(row[idx]))
+        cap = max_widths[idx] if max_widths is not None else natural
+        widths.append(max(1, min(natural, cap)))
 
-    separator = "-+-".join("-" * w for w in widths)
-    lines = [build_row(safe_headers), separator]
+    def _compose_row(cell_lines: List[List[str]], line_idx: int) -> str:
+        return " | ".join(
+            (cell_lines[col_idx][line_idx] if line_idx < len(cell_lines[col_idx]) else "").ljust(widths[col_idx])
+            for col_idx in range(col_count)
+        )
+
+    header_lines = [_wrap_text_cell(safe_headers[idx], widths[idx]) for idx in range(col_count)]
+    header_height = max(len(lines) for lines in header_lines)
+    lines: List[str] = []
+    for i in range(header_height):
+        lines.append(_compose_row(header_lines, i))
+    lines.append("-+-".join("-" * width for width in widths))
+
     for row in safe_rows:
-        lines.append(build_row(row))
+        cell_lines = [_wrap_text_cell(row[idx], widths[idx]) for idx in range(col_count)]
+        row_height = max(len(lines_for_cell) for lines_for_cell in cell_lines)
+        for i in range(row_height):
+            lines.append(_compose_row(cell_lines, i))
     return "\n".join(lines)
 
 
@@ -588,8 +654,16 @@ def _build_pdf_report(
         name="Mono",
         parent=styles["Code"],
         fontName="Courier",
-        fontSize=7.6,
-        leading=9.2,
+        fontSize=6.4,
+        leading=7.2,
+    )
+    sequence_cell_style = ParagraphStyle(
+        name="SequenceCell",
+        parent=body_style,
+        fontName="Courier",
+        fontSize=7.0,
+        leading=8.0,
+        wordWrap="CJK",
     )
 
     story = []
@@ -819,12 +893,12 @@ def _build_pdf_report(
                     f"{hit.norm10:.3f}",
                     f"{hit.combined:.3f}",
                     f"{hit.p_value:.4g}",
-                    _clip_text(hit.promoter_seq, 36),
+                    Paragraph(_format_sequence_for_report(hit.promoter_seq, group_size=8, groups_per_line=4, html_mode=True), sequence_cell_style),
                 ]
             )
         promoter_table = Table(
             promoter_table_data,
-            colWidths=[10 * mm, 12 * mm, 16 * mm, 16 * mm, 13 * mm, 16 * mm, 16 * mm, 15 * mm, 16 * mm, 52 * mm],
+            colWidths=[9 * mm, 10 * mm, 13 * mm, 13 * mm, 12 * mm, 13 * mm, 13 * mm, 13 * mm, 13 * mm, 67 * mm],
             repeatRows=1,
         )
         promoter_table.setStyle(
@@ -882,6 +956,7 @@ def _build_pdf_report(
         motif_copy_table = _build_copy_paste_table(
             ["motif", "category", "type", "locations", "score", "impact"],
             motif_rows,
+            max_widths=[18, 12, 10, 26, 8, 22],
         )
         story.append(Paragraph("Motif table", body_style))
         story.append(Preformatted(motif_copy_table, mono_style))
@@ -901,12 +976,13 @@ def _build_pdf_report(
                     f"{hit.norm10:.4f}",
                     f"{hit.combined:.4f}",
                     f"{hit.p_value:.5g}",
-                    _clip_text(hit.promoter_seq, 120),
+                    _format_sequence_for_report(hit.promoter_seq, group_size=8, groups_per_line=4, html_mode=False),
                 ]
             )
         promoter_copy_table = _build_copy_paste_table(
             ["rank", "strand", "box35_start", "box10_start", "spacing", "norm35", "norm10", "combined", "p_value", "promoter_seq"],
             promoter_rows,
+            max_widths=[4, 6, 11, 11, 7, 7, 7, 8, 8, 22],
         )
         story.append(Paragraph("Promoter table", body_style))
         story.append(Preformatted(promoter_copy_table, mono_style))
