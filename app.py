@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from bisect import bisect_left
-from io import StringIO
+from datetime import datetime, timezone
+from io import BytesIO, StringIO
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ import webbrowser
 
 from Bio import SeqIO, motifs
 from Bio.Seq import Seq
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, send_file
 
 from analysis import analyze_sequence_v2
 
@@ -430,6 +431,515 @@ def _build_promoter_report(hits: List[PromoterHit], max_hits: int) -> str:
     return summary + "\n" + "\n".join(lines)
 
 
+def _run_dashboard_analysis(sequence_value: str, form_values: Dict[str, str]) -> Dict[str, object]:
+    motif_error = ""
+    promoter_error = ""
+    motif_analysis = None
+    promoter_result = ""
+    promoter_matches: List[str] = []
+    promoter_hits: List[PromoterHit] = []
+    sequence_length = len(sequence_value)
+
+    try:
+        motif_analysis = analyze_sequence_v2(sequence_value)
+    except Exception as exc:
+        motif_error = f"DNA motifs analysis failed: {exc}"
+
+    try:
+        min_spacing = parse_int("min_spacing", form_values["min_spacing"])
+        max_spacing = parse_int("max_spacing", form_values["max_spacing"])
+        min_norm_35 = parse_float("min_norm_35", form_values["min_norm_35"])
+        min_norm_10 = parse_float("min_norm_10", form_values["min_norm_10"])
+        min_combined = parse_float("min_combined", form_values["min_combined"])
+        max_hits = parse_int("max_hits", form_values["max_hits"])
+        circular_sequence = form_values["circular_sequence"] == "on"
+
+        motif_35 = load_jaspar(BASE_DIR / "sigma70_box35_fixed.jaspar")
+        motif_10 = load_jaspar(BASE_DIR / "sigma70_box10_fixed.jaspar")
+        promoter_hits = scan_promoters(
+            sequence=sequence_value,
+            motif_35=motif_35,
+            motif_10=motif_10,
+            min_spacing=min_spacing,
+            max_spacing=max_spacing,
+            min_norm_35=min_norm_35,
+            min_norm_10=min_norm_10,
+            min_combined=min_combined,
+            max_hits=max_hits,
+            circular_sequence=circular_sequence,
+            sensitivity_profile=form_values["preset"],
+        )
+
+        if promoter_hits:
+            promoter_result = _build_promoter_report(promoter_hits, max_hits=max_hits)
+            promoter_matches = generate_visualization(
+                seq_len=sequence_length,
+                hits=promoter_hits[:50],
+                box35_len=len(motif_35),
+                box10_len=len(motif_10),
+            )
+        else:
+            promoter_result = (
+                "No promoter found with current thresholds. "
+                "Try lower normalized thresholds (e.g. 0.25) or widen spacing range."
+            )
+    except Exception as exc:
+        promoter_error = f"Promoter scan failed: {exc}"
+
+    return {
+        "sequence_length": sequence_length,
+        "motif_analysis": motif_analysis,
+        "motif_error": motif_error,
+        "promoter_error": promoter_error,
+        "promoter_result": promoter_result,
+        "promoter_matches": promoter_matches,
+        "promoter_hits": promoter_hits,
+    }
+
+
+def _pdf_safe_text(value) -> str:
+    text = str(value if value is not None else "")
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+def _clip_text(value, max_len: int = 180) -> str:
+    text = _pdf_safe_text(value).replace("\n", " ")
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
+
+
+def _build_copy_paste_table(headers: List[str], rows: List[List[str]]) -> str:
+    safe_headers = [_pdf_safe_text(h) for h in headers]
+    safe_rows = [[_pdf_safe_text(cell) for cell in row] for row in rows]
+    widths = [len(h) for h in safe_headers]
+    for row in safe_rows:
+        for idx, cell in enumerate(row):
+            widths[idx] = max(widths[idx], len(cell))
+
+    def build_row(cells: List[str]) -> str:
+        return " | ".join(cells[i].ljust(widths[i]) for i in range(len(widths)))
+
+    separator = "-+-".join("-" * w for w in widths)
+    lines = [build_row(safe_headers), separator]
+    for row in safe_rows:
+        lines.append(build_row(row))
+    return "\n".join(lines)
+
+
+def _build_pdf_report(
+    sequence_value: str,
+    form_values: Dict[str, str],
+    analysis_result: Dict[str, object],
+    input_error: str = "",
+) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import PageBreak, Paragraph, Preformatted, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    generated_on = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    motif_analysis = analysis_result.get("motif_analysis")
+    promoter_hits: List[PromoterHit] = analysis_result.get("promoter_hits", [])  # type: ignore[assignment]
+    motif_error = str(analysis_result.get("motif_error", ""))
+    promoter_error = str(analysis_result.get("promoter_error", ""))
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+        topMargin=16 * mm,
+        bottomMargin=14 * mm,
+        title="Promoter Motif Dashboard Report",
+        author=APP_NAME,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        name="ReportTitle",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=20,
+        leading=24,
+        textColor=colors.HexColor("#1b2a3a"),
+        spaceAfter=6,
+    )
+    section_style = ParagraphStyle(
+        name="SectionHeading",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=13,
+        leading=16,
+        textColor=colors.HexColor("#243f5a"),
+        spaceBefore=8,
+        spaceAfter=6,
+    )
+    body_style = ParagraphStyle(
+        name="Body",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=12,
+    )
+    mono_style = ParagraphStyle(
+        name="Mono",
+        parent=styles["Code"],
+        fontName="Courier",
+        fontSize=7.6,
+        leading=9.2,
+    )
+
+    story = []
+    story.append(Paragraph("Promoter + DNA Motifs Dashboard Report", title_style))
+    story.append(Paragraph(_pdf_safe_text(f"Generated on: {generated_on}"), body_style))
+    story.append(Paragraph(_pdf_safe_text(f"Sequence length: {len(sequence_value)} bp"), body_style))
+    story.append(
+        Paragraph(
+            _pdf_safe_text(
+                f"Preset: {form_values['preset']} | Circular sequence: {'yes' if form_values['circular_sequence'] == 'on' else 'no'}"
+            ),
+            body_style,
+        )
+    )
+    story.append(Spacer(1, 6))
+
+    if input_error:
+        story.append(Paragraph(_pdf_safe_text(f"Input parsing error: {input_error}"), body_style))
+
+    settings_rows = [
+        ["Min spacing", form_values["min_spacing"]],
+        ["Max spacing", form_values["max_spacing"]],
+        ["Min -35 normalized score", form_values["min_norm_35"]],
+        ["Min -10 normalized score", form_values["min_norm_10"]],
+        ["Min combined score", form_values["min_combined"]],
+        ["Max promoter hits", form_values["max_hits"]],
+    ]
+    settings_table = Table([["Parameter", "Value"]] + settings_rows, colWidths=[70 * mm, 40 * mm])
+    settings_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9e5f2")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0f2236")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#95a8bc")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7fafc")]),
+            ]
+        )
+    )
+    story.append(Paragraph("Analysis Parameters", section_style))
+    story.append(settings_table)
+    story.append(Spacer(1, 8))
+
+    summary_rows = [
+        ["Detected promoters", str(len(promoter_hits))],
+        [
+            "Detected motifs",
+            str(len(motif_analysis["motifs"])) if motif_analysis and motif_analysis.get("motifs") else "0",
+        ],
+        [
+            "Risk total (config-driven)",
+            f"{motif_analysis['risk']['total']:.6f}" if motif_analysis and motif_analysis.get("risk") else "n/a",
+        ],
+        [
+            "Risk total (hardcoded v2)",
+            f"{motif_analysis['risk_new']['total']:.6f}" if motif_analysis and motif_analysis.get("risk_new") else "n/a",
+        ],
+    ]
+    summary_table = Table([["Metric", "Value"]] + summary_rows, colWidths=[80 * mm, 30 * mm])
+    summary_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#dae7da")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#103818")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#96b296")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7fbf7")]),
+            ]
+        )
+    )
+    story.append(Paragraph("Executive Summary", section_style))
+    story.append(summary_table)
+    story.append(Spacer(1, 8))
+
+    story.append(
+        Paragraph(
+            _pdf_safe_text(
+                "Interpretation guide: promoter combined score blends normalized -35 and -10 box quality with spacing quality. "
+                "For motifs, non-heuristic motifs are pattern matches while heuristic motifs are signal-driven segments."
+            ),
+            body_style,
+        )
+    )
+
+    story.append(Paragraph("DNA Motif Details", section_style))
+    if motif_error:
+        story.append(Paragraph(_pdf_safe_text(motif_error), body_style))
+    elif motif_analysis and motif_analysis.get("motifs"):
+        motif_table_data = [["Motif", "Category", "Type", "Score", "Details"]]
+        for motif_item in motif_analysis["motifs"]:
+            if motif_item.get("heuristic") and motif_item.get("segments") is not None:
+                details = (
+                    f"segments={motif_item.get('count_segments', 0)}, "
+                    f"coverage={motif_item.get('coverage_fraction', 0.0) * 100:.2f}%"
+                )
+            elif motif_item.get("positions") is not None:
+                positions = motif_item.get("positions", [])
+                details = ", ".join(str(pos) for pos in positions[:12])
+                if len(positions) > 12:
+                    details += f" (+{len(positions) - 12} more)"
+            else:
+                details = "-"
+            motif_table_data.append(
+                [
+                    _clip_text(motif_item.get("name", ""), 32),
+                    _clip_text(motif_item.get("category", ""), 14),
+                    "heuristic" if motif_item.get("heuristic") else "regex",
+                    f"{motif_item.get('score', 0):.4g}",
+                    _clip_text(details, 66),
+                ]
+            )
+        motif_table = Table(
+            motif_table_data,
+            colWidths=[38 * mm, 24 * mm, 18 * mm, 18 * mm, 72 * mm],
+            repeatRows=1,
+        )
+        motif_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f3e6ce")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8),
+                    ("ALIGN", (3, 1), (3, -1), "RIGHT"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#c4b79f")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fffaf2")]),
+                ]
+            )
+        )
+        story.append(motif_table)
+    else:
+        story.append(Paragraph("No motifs found.", body_style))
+
+    story.append(Spacer(1, 8))
+    story.append(Paragraph("Risk Model Details", section_style))
+    if motif_analysis and motif_analysis.get("risk"):
+        risk_data = motif_analysis["risk"]
+        raw_by_category = risk_data.get("by_category", {})
+        weighted_by_category = risk_data.get("by_category_weighted", {})
+        risk_rows = []
+        for category in sorted(set(raw_by_category.keys()) | set(weighted_by_category.keys())):
+            raw_val = float(raw_by_category.get(category, 0.0))
+            weighted_val = float(weighted_by_category.get(category, 0.0))
+            risk_rows.append([_clip_text(category, 20), f"{raw_val:.6f}", f"{weighted_val:.6f}"])
+        if risk_rows:
+            risk_table = Table([["Category", "Raw score", "Weighted score"]] + risk_rows, colWidths=[52 * mm, 32 * mm, 34 * mm])
+            risk_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8e1f2")),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+                        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#b8accc")),
+                        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#faf8fd")]),
+                    ]
+                )
+            )
+            story.append(risk_table)
+
+        risk_notes = risk_data.get("notes", [])
+        synergy_flags = risk_data.get("synergy_flags", [])
+        if synergy_flags:
+            story.append(Spacer(1, 4))
+            story.append(Paragraph(_pdf_safe_text("Triggered synergy flags: " + ", ".join(synergy_flags)), body_style))
+        if risk_notes:
+            story.append(Paragraph(_pdf_safe_text("Risk notes: " + " | ".join(risk_notes)), body_style))
+
+        hardcoded = motif_analysis.get("risk_new", {}).get("by_motif", {})
+        if hardcoded:
+            story.append(Spacer(1, 6))
+            story.append(Paragraph("Hardcoded v2 motif contributions", body_style))
+            hardcoded_rows = []
+            for motif_name, value in sorted(hardcoded.items(), key=lambda item: item[1], reverse=True):
+                hardcoded_rows.append([_clip_text(motif_name, 58), f"{float(value):.6f}"])
+            hardcoded_table = Table([["Motif", "Contribution"]] + hardcoded_rows, colWidths=[98 * mm, 20 * mm], repeatRows=1)
+            hardcoded_table.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#efe8d8")),
+                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                        ("FONTSIZE", (0, 0), (-1, -1), 8),
+                        ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+                        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#ccbfa8")),
+                    ]
+                )
+            )
+            story.append(hardcoded_table)
+    else:
+        story.append(Paragraph("Risk data unavailable due to analysis error.", body_style))
+
+    story.append(Spacer(1, 8))
+    story.append(Paragraph("Promoter Candidate Details", section_style))
+    if promoter_error:
+        story.append(Paragraph(_pdf_safe_text(promoter_error), body_style))
+    elif promoter_hits:
+        promoter_table_data = [
+            [
+                "Rank",
+                "Strand",
+                "-35 start",
+                "-10 start",
+                "Spacing",
+                "Norm -35",
+                "Norm -10",
+                "Combined",
+                "p-value",
+                "Promoter sequence",
+            ]
+        ]
+        for idx, hit in enumerate(promoter_hits, start=1):
+            promoter_table_data.append(
+                [
+                    str(idx),
+                    hit.strand,
+                    str(hit.box35_start),
+                    str(hit.box10_start),
+                    str(hit.spacing),
+                    f"{hit.norm35:.3f}",
+                    f"{hit.norm10:.3f}",
+                    f"{hit.combined:.3f}",
+                    f"{hit.p_value:.4g}",
+                    _clip_text(hit.promoter_seq, 36),
+                ]
+            )
+        promoter_table = Table(
+            promoter_table_data,
+            colWidths=[10 * mm, 12 * mm, 16 * mm, 16 * mm, 13 * mm, 16 * mm, 16 * mm, 15 * mm, 16 * mm, 52 * mm],
+            repeatRows=1,
+        )
+        promoter_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#dceaf1")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7.6),
+                    ("ALIGN", (0, 1), (8, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#9cb2c1")),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fbfd")]),
+                ]
+            )
+        )
+        story.append(promoter_table)
+    else:
+        story.append(Paragraph("No promoters found with the current thresholds.", body_style))
+
+    story.append(PageBreak())
+    story.append(Paragraph("Copy-Paste Tables", section_style))
+    story.append(
+        Paragraph(
+            _pdf_safe_text(
+                "These plain-text tables are included for direct copy and paste into spreadsheets or notebooks."
+            ),
+            body_style,
+        )
+    )
+    story.append(Spacer(1, 4))
+
+    if motif_analysis and motif_analysis.get("motifs"):
+        motif_rows = []
+        for motif_item in motif_analysis["motifs"]:
+            if motif_item.get("segments") is not None:
+                location = "; ".join(
+                    f"[{seg.get('start')}-{seg.get('end')}] {seg.get('length_bp')}bp"
+                    for seg in motif_item.get("segments", [])
+                )
+                if not location:
+                    location = "segments: none"
+            else:
+                location = ",".join(str(pos) for pos in motif_item.get("positions", []))
+            motif_rows.append(
+                [
+                    _clip_text(motif_item.get("name", ""), 42),
+                    _clip_text(motif_item.get("category", ""), 16),
+                    "heuristic" if motif_item.get("heuristic") else "regex",
+                    _clip_text(location, 130),
+                    str(motif_item.get("score", 0)),
+                    _clip_text(motif_item.get("impact", ""), 82),
+                ]
+            )
+        motif_copy_table = _build_copy_paste_table(
+            ["motif", "category", "type", "locations", "score", "impact"],
+            motif_rows,
+        )
+        story.append(Paragraph("Motif table", body_style))
+        story.append(Preformatted(motif_copy_table, mono_style))
+        story.append(Spacer(1, 8))
+
+    if promoter_hits:
+        promoter_rows = []
+        for idx, hit in enumerate(promoter_hits, start=1):
+            promoter_rows.append(
+                [
+                    str(idx),
+                    hit.strand,
+                    str(hit.box35_start),
+                    str(hit.box10_start),
+                    str(hit.spacing),
+                    f"{hit.norm35:.4f}",
+                    f"{hit.norm10:.4f}",
+                    f"{hit.combined:.4f}",
+                    f"{hit.p_value:.5g}",
+                    _clip_text(hit.promoter_seq, 120),
+                ]
+            )
+        promoter_copy_table = _build_copy_paste_table(
+            ["rank", "strand", "box35_start", "box10_start", "spacing", "norm35", "norm10", "combined", "p_value", "promoter_seq"],
+            promoter_rows,
+        )
+        story.append(Paragraph("Promoter table", body_style))
+        story.append(Preformatted(promoter_copy_table, mono_style))
+
+    story.append(PageBreak())
+    story.append(Paragraph("Glossary", section_style))
+    glossary_items = [
+        ("-35 box", "Upstream promoter element recognized by sigma factor near ~35 bases before transcription start."),
+        ("-10 box", "Promoter element close to ~10 bases before transcription start, often rich in A/T."),
+        ("Normalized score", "Motif score scaled between motif-specific minimum and maximum to compare candidates."),
+        ("Combined score", "Weighted score using normalized -35, normalized -10, and spacing bonus."),
+        ("Spacing", "Distance in base pairs between the end of -35 box and start of -10 box."),
+        ("p-value", "Empirical significance estimate against composition-preserving shuffled background."),
+        ("Heuristic motif", "Pattern detected by sequence properties (for example GC-rich windows), not only regex."),
+        ("Coverage fraction", "Fraction of the full sequence covered by merged heuristic segments."),
+        ("Synergy rule", "Rule that modifies risk when specific motif combinations are present together."),
+    ]
+    for term, definition in glossary_items:
+        story.append(Paragraph(_pdf_safe_text(f"<b>{term}</b>: {definition}"), body_style))
+        story.append(Spacer(1, 2))
+
+    def draw_footer(canvas, doc_obj):
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor("#5a6775"))
+        canvas.drawRightString(A4[0] - 16 * mm, 8 * mm, f"Page {doc_obj.page}")
+        canvas.drawString(16 * mm, 8 * mm, _pdf_safe_text(APP_NAME))
+
+    doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
+    return pdf_bytes
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     form_values: Dict[str, str] = {
@@ -452,6 +962,7 @@ def index():
     motif_analysis = None
     promoter_result = ""
     promoter_matches = []
+    report_ready = False
 
     if request.method == "POST":
         form_values.update(
@@ -479,51 +990,13 @@ def index():
             input_error = str(exc)
 
         if not input_error:
-            try:
-                motif_analysis = analyze_sequence_v2(sequence_value)
-            except Exception as exc:
-                motif_error = f"DNA motifs analysis failed: {exc}"
-
-            try:
-                min_spacing = parse_int("min_spacing", form_values["min_spacing"])
-                max_spacing = parse_int("max_spacing", form_values["max_spacing"])
-                min_norm_35 = parse_float("min_norm_35", form_values["min_norm_35"])
-                min_norm_10 = parse_float("min_norm_10", form_values["min_norm_10"])
-                min_combined = parse_float("min_combined", form_values["min_combined"])
-                max_hits = parse_int("max_hits", form_values["max_hits"])
-                circular_sequence = form_values["circular_sequence"] == "on"
-
-                motif_35 = load_jaspar(BASE_DIR / "sigma70_box35_fixed.jaspar")
-                motif_10 = load_jaspar(BASE_DIR / "sigma70_box10_fixed.jaspar")
-                promoter_hits = scan_promoters(
-                    sequence=sequence_value,
-                    motif_35=motif_35,
-                    motif_10=motif_10,
-                    min_spacing=min_spacing,
-                    max_spacing=max_spacing,
-                    min_norm_35=min_norm_35,
-                    min_norm_10=min_norm_10,
-                    min_combined=min_combined,
-                    max_hits=max_hits,
-                    circular_sequence=circular_sequence,
-                    sensitivity_profile=form_values["preset"],
-                )
-
-                if promoter_hits:
-                    promoter_result = _build_promoter_report(promoter_hits, max_hits=max_hits)
-                    promoter_matches = generate_visualization(
-                        seq_len=sequence_length,
-                        hits=promoter_hits[:50],
-                        box35_len=len(motif_35),
-                        box10_len=len(motif_10),
-                    )
-                else:
-                    promoter_result = (
-                        "No promoter found with current thresholds. "
-                        "Try lower normalized thresholds (e.g. 0.25) or widen spacing range."
-                    )
-            except Exception as exc:
-                promoter_error = f"Promoter scan failed: {exc}"
+            analysis_result = _run_dashboard_analysis(sequence_value, form_values)
+            motif_analysis = analysis_result["motif_analysis"]
+            motif_error = str(analysis_result["motif_error"])
+            promoter_error = str(analysis_result["promoter_error"])
+            promoter_result = str(analysis_result["promoter_result"])
+            promoter_matches = analysis_result["promoter_matches"]
+            report_ready = True
 
     return render_template(
         "index.html",
@@ -538,6 +1011,57 @@ def index():
         motif_analysis=motif_analysis,
         promoter_result=promoter_result,
         promoter_matches=promoter_matches,
+        report_ready=report_ready,
+    )
+
+
+@app.route("/export/report.pdf", methods=["POST"])
+def export_report_pdf():
+    form_values: Dict[str, str] = {
+        "preset": request.form.get("preset", "balanced"),
+        "min_spacing": request.form.get("min_spacing", "14"),
+        "max_spacing": request.form.get("max_spacing", "20"),
+        "min_norm_35": request.form.get("min_norm_35", "0.35"),
+        "min_norm_10": request.form.get("min_norm_10", "0.35"),
+        "min_combined": request.form.get("min_combined", "0.45"),
+        "max_hits": request.form.get("max_hits", "100"),
+        "sequence_input": request.form.get("sequence_input", ""),
+        "circular_sequence": "on" if request.form.get("circular_sequence") else "",
+    }
+    if form_values["preset"] not in PRESET_OPTIONS:
+        form_values["preset"] = "balanced"
+    apply_preset_to_form_values(form_values)
+
+    input_error = ""
+    sequence_value = ""
+    sequence_for_report = request.form.get("sequence_for_report", "").strip()
+    try:
+        if sequence_for_report:
+            sequence_value = parse_sequence_from_input(None, sequence_for_report)
+        else:
+            fasta_file = request.files.get("fasta_file")
+            sequence_value = parse_sequence_from_input(fasta_file, form_values["sequence_input"])
+    except Exception as exc:
+        input_error = str(exc)
+
+    if input_error:
+        return f"Unable to export PDF report: {input_error}", 400
+
+    analysis_result = _run_dashboard_analysis(sequence_value, form_values)
+    try:
+        pdf_bytes = _build_pdf_report(sequence_value, form_values, analysis_result, input_error=input_error)
+    except ImportError as exc:
+        return f"PDF export unavailable: {exc}. Install dependencies from requirements.txt.", 500
+    except Exception as exc:
+        return f"Failed to generate PDF report: {exc}", 500
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"promoter_motif_report_{stamp}.pdf"
+    return send_file(
+        BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=filename,
     )
 
 
