@@ -24,17 +24,10 @@ Single Flask app that merges:
 
 ## Run
 ```bash
-.\setup_venv.ps1
-.\run.ps1
-```
-
-Alternative (manual):
-```bash
+python -m venv .venv
 .venv\Scripts\activate
+pip install -r requirements.txt
 python app.py
 ```
-
-`app.py` auto-switches to `.\.venv\Scripts\python.exe` when available, so launching `python app.py`
-from a global interpreter no longer fails on missing local dependencies.
 
 Default URL: `http://127.0.0.1:5000`
